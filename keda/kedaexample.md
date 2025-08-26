@@ -161,7 +161,14 @@ spec:
             secretKeyRef:
               name: servicebus-secret
               key: connection
----
+EOF
+```
+
+k get deploy 
+k get hpa
+
+```bash
+kubectl apply -f - <<EOF
 apiVersion: keda.sh/v1alpha1
 kind: ScaledObject
 metadata:
@@ -181,6 +188,10 @@ spec:
 EOF
 ```
 
+Issue the following commands and understand metrics: uner spec: 
+k get deploy 
+k get hpa
+k get hpa keda-hpa-message-consumer-traditional-scaledobject -o yaml
 ### Step 4: Test the Traditional Approach
 
 ```bash
@@ -229,7 +240,15 @@ kubectl describe hpa keda-hpa-message-consumer-traditional-scaledobject
 kubectl describe scaledobject message-consumer-traditional-scaledobject
 
 # See the external metric that KEDA is providing to HPA
-kubectl get --raw "/apis/external.metrics.k8s.io/v1beta1/namespaces/default/azure-servicebus-$SB_QUEUE_NAME" | jq
+# First, get the metric name from the HPA that KEDA created
+kubectl get hpa -o yaml | grep -A 5 external
+
+# Use the correct metric name (KEDA generates names like s0-azure-servicebus-demo-queue)
+# Replace the metric name below with the actual one from your HPA
+kubectl get --raw "/apis/external.metrics.k8s.io/v1beta1/namespaces/default/s0-azure-servicebus-demo-queue?labelSelector=scaledobject.keda.sh%2Fname%3Dmessage-consumer-traditional-scaledobject" | jq
+
+# Alternative: Query all available external metrics
+kubectl get --raw "/apis/external.metrics.k8s.io/v1beta1" | jq '.resources[]'
 
 # Monitor KEDA operator logs
 kubectl logs -n kube-system deployment/keda-operator -f
@@ -244,6 +263,18 @@ az servicebus queue show \
 # Verify scaling works - should scale from 0 to N pods based on queue depth
 kubectl get pods -l app=message-consumer-traditional --watch
 ```
+
+### Understanding KEDA External Metrics
+
+KEDA creates external metrics with specific naming conventions:
+- **Metric Name Format**: `s{trigger-index}-{scaler-type}-{queue-name}`
+- **Example**: `s0-azure-servicebus-demo-queue` (first trigger, Service Bus scaler, demo-queue)
+- **Label Selector Required**: `scaledobject.keda.sh/name={scaledobject-name}`
+
+**Common Issues:**
+- ❌ `Error: scaledObject name is not specified` - Missing label selector
+- ❌ Using queue name directly instead of KEDA-generated metric name
+- ✅ Always check HPA YAML to get the correct metric name and selector
 
 ---
 
