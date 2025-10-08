@@ -28,22 +28,7 @@ az --version
 - Standard Load Balancer (required)
 - Linux nodes only (Windows not supported)
 
-### Unsupported Features
-- **Private clusters** (currently not supported)
-- **Traditional cluster autoscaler** (NAP replaces this - cannot use both)
-- Windows node pools
-- IPv6 clusters
-- Service Principals
-- Disk encryption sets
-- CustomCATrustCertificates
-- HTTP proxy
-- Cluster stop/start functionality
 
-### Recommended Network Configuration
-- Azure CNI Overlay with Cilium (recommended)
-- Azure CNI Overlay
-- Azure CNI with Cilium
-- Azure CNI
 
 ## Step 1: Set Environment Variables
 
@@ -89,29 +74,9 @@ az network vnet subnet create \
     --resource-group $RG_NAME \
     --vnet-name $VNET_NAME \
     --name cluster-subnet \
-    --address-prefixes 10.0.1.0/24 \
+    --address-prefixes 192.168.0.0/24 \
     --delegations Microsoft.ContainerService/managedClusters
 
-az network vnet subnet create \
-    --resource-group $RG_NAME \
-    --vnet-name $VNET_NAME \
-    --name testcluster-subnet \
-    --address-prefixes 192.168.10.0/24 
-
-az network vnet subnet create \
-    --resource-group $RG_NAME \
-    --vnet-name $VNET_NAME \
-    --name testcluster-subnet2 \
-    --address-prefixes 192.168.11.0/24 
-
-# Create API server subnet (required for NAP with custom VNET)
-# Minimum size is /28
-az network vnet subnet create \
-    --resource-group $RG_NAME \
-    --vnet-name $VNET_NAME \
-    --name api-server-subnet \
-    --address-prefixes 10.0.2.0/28 \
-    --delegations Microsoft.ContainerService/managedClusters
 
 # Get subnet IDs
 CLUSTER_SUBNET_ID=$(az network vnet subnet show \
@@ -120,14 +85,9 @@ CLUSTER_SUBNET_ID=$(az network vnet subnet show \
     --name cluster-subnet \
     --query id -o tsv)
 
-API_SERVER_SUBNET_ID=$(az network vnet subnet show \
-    --resource-group $RG_NAME \
-    --vnet-name $VNET_NAME \
-    --name api-server-subnet \
-    --query id -o tsv)
+
 
 echo "Cluster Subnet ID: $CLUSTER_SUBNET_ID"
-echo "API Server Subnet ID: $API_SERVER_SUBNET_ID"
 ```
 
 ## Step 4: Create Managed Identity and Assign Permissions
@@ -186,73 +146,6 @@ az aks create \
 echo "AKS cluster '$CLUSTER_NAME' created successfully with NAP enabled"
 ```
 
-### Alternative: NAP with Custom VNET (No Delegation Conflict)
-
-```bash
-# Create a separate subnet for system nodes (not delegated)
-az network vnet subnet create \
-    --resource-group $RG_NAME \
-    --vnet-name $VNET_NAME \
-    --name system-subnet \
-    --address-prefixes 10.0.3.0/24
-
-# Get system subnet ID
-SYSTEM_SUBNET_ID=$(az network vnet subnet show \
-    --resource-group $RG_NAME \
-    --vnet-name $VNET_NAME \
-    --name system-subnet \
-    --query id -o tsv)
-
-TESTCLUSTER_SUBNET2_ID=$(az network vnet subnet show \
-    --resource-group $RG_NAME \
-    --vnet-name $VNET_NAME \
-    --name testcluster-subnet2 \
-    --query id -o tsv)    
-
-# Create AKS cluster with NAP using custom VNET
-az aks create \
-    --name $CLUSTER_NAME \
-    --resource-group $RG_NAME \
-    --location "$LOCATION" \
-    --vnet-subnet-id $TESTCLUSTER_SUBNET_ID \
-    --assign-identity $IDENTITY_ID \
-    --node-provisioning-mode Auto \
-    --network-plugin azure \
-    --network-plugin-mode overlay \
-    --network-dataplane cilium \
-    --enable-managed-identity \
-    --generate-ssh-keys \
-    --node-count 1 \
-    --node-vm-size Standard_D2s_v5
-
-echo "AKS cluster '$CLUSTER_NAME' created successfully with NAP and custom VNET"
-```
-
-### Option B: Private Cluster with NAP (For Future Use)
-
-```bash
-# NOTE: This configuration is for when private clusters are supported with NAP
-# Currently this will fail with an error
-
-# Create private AKS cluster with Node Auto Provisioning (NOT CURRENTLY SUPPORTED)
-az aks create \
-    --name aksnap2 \
-    --resource-group $RG_NAME \
-    --location "$LOCATION" \
-    --vnet-subnet-id $TESTCLUSTER_SUBNET2_ID \
-    --assign-identity $IDENTITY_ID \
-    --node-provisioning-mode Auto \
-    --network-plugin azure \
-    --network-plugin-mode overlay \
-    --network-dataplane cilium \
-    --enable-managed-identity \
-    --enable-private-cluster \
-    --private-dns-zone system \
-    --generate-ssh-keys  
-
-# This command will currently fail with private cluster + NAP combination
-```
-
 ## Step 6: Configure kubectl
 
 ```bash
@@ -278,14 +171,35 @@ az aks show \
 
 # Should return "Auto"
 
-# Check for Karpenter components
-kubectl get pods -n kube-system | grep karpenter
 
-# Check for NAP-related CRDs
-kubectl get crd | grep -E "(nodepool|aksnodeclass)"
+# Check for NAP api-resources
+kubectl  api-resources | grep karp
+
 ```
 
-## Step 8: Create Basic NodePool and AKSNodeClass
+## Step 8: Create Basic AKSNodeClass and NodePool
+
+### Basic AKSNodeClass Configuration
+
+```bash
+kubectl apply -f - <<EOF
+apiVersion: karpenter.azure.com/v1beta1
+kind: AKSNodeClass
+metadata:
+  name: default-nodeclass
+  annotations:
+    kubernetes.io/description: "General purpose AKSNodeClass for Ubuntu2204 nodes"
+spec:
+  imageFamily: Ubuntu2204
+EOF
+```
+
+### Explore spec for aksnodeclasses  
+
+```bash
+k explain aksnodeclasses.spec
+k explain aksnodeclasses.spec.imageFamily
+```
 
 ### Basic NodePool Configuration
 
@@ -300,42 +214,24 @@ spec:
     metadata:
       labels:
         intent: apps
-        nodepool: default
     spec:
       requirements:
         - key: karpenter.sh/capacity-type
           operator: In
           values: [spot, on-demand]
-        - key: karpenter.azure.com/sku-family
+        - key: node.kubernetes.io/instance-type
           operator: In
-          values: [D]  # D-series VMs
-        - key: karpenter.azure.com/sku-size
-          operator: In
-          values: [2, 4, 8]  # VM sizes with 2, 4, or 8 vCPUs
+          values: [Standard_D2s_v5, Standard_D4s_v5, Standard_D8s_v5]  # Specific VM sizes
+      nodeClassRef:
+        group: karpenter.azure.com
+        kind: AKSNodeClass
+        name: default-nodeclass
       expireAfter: Never
   limits:
-    cpu: 100  # Maximum 100 vCPUs across all nodes in this pool
+    cpu: 30  # Maximum 30 vCPUs across all nodes in this pool
   disruption:
     consolidationPolicy: WhenEmptyOrUnderutilized
-    consolidateAfter: 30s
-EOF
-```
-
-### Basic AKSNodeClass Configuration
-
-```bash
-kubectl apply -f - <<EOF
-apiVersion: karpenter.azure.com/v1beta1
-kind: AKSNodeClass
-metadata:
-  name: default-nodeclass
-  annotations:
-    kubernetes.io/description: "General purpose AKSNodeClass for Ubuntu2204 nodes"
-spec:
-  imageFamily: Ubuntu2204
-  osDiskPolicy: Managed
-  osDiskSizeGB: 128
-  osDiskType: Premium_LRS
+    consolidateAfter: 0s
 EOF
 ```
 
@@ -369,8 +265,6 @@ spec:
           limits:
             cpu: 1000m
             memory: 1Gi
-      nodeSelector:
-        intent: apps
 EOF
 ```
 
@@ -380,7 +274,10 @@ EOF
 # Watch nodes being created
 watch kubectl get nodes
 
-# Monitor NAP events
+# Monitor NAP events (sorted by timestamp)
+kubectl get events -A --field-selector source=karpenter --sort-by='.lastTimestamp'
+
+# Watch NAP events in real-time
 kubectl get events -A --field-selector source=karpenter -w
 
 # Check node claims (managed by NAP)
@@ -388,6 +285,13 @@ kubectl get nodeclaims
 
 # Check pod scheduling
 kubectl get pods -o wide
+
+# Check if pods are pending and why
+kubectl get pods -o wide | grep Pending
+kubectl describe pods -l app=nap-test | grep -A 10 "Events:"
+
+# Check nodeclaim details for troubleshooting
+kubectl describe nodeclaims
 ```
 
 ## Advanced NodePool Configurations
@@ -411,15 +315,16 @@ spec:
         - key: karpenter.sh/capacity-type
           operator: In
           values: [on-demand]  # Only on-demand for production
-        - key: karpenter.azure.com/sku-family
+        - key: node.kubernetes.io/instance-type
           operator: In
-          values: [D, E]  # D-series and E-series (memory optimized)
-        - key: karpenter.azure.com/sku-size
-          operator: In
-          values: [4, 8, 16]  # Larger instance sizes
+          values: [Standard_D4s_v5, Standard_D8s_v5, Standard_D16s_v5, Standard_E4s_v5, Standard_E8s_v5]  # D-series and E-series
         - key: kubernetes.io/arch
           operator: In
           values: [amd64]
+      nodeClassRef:
+        group: karpenter.azure.com
+        kind: AKSNodeClass
+        name: default-nodeclass
       expireAfter: 24h  # Expire nodes after 24 hours for security
       taints:
         - key: production
@@ -452,12 +357,13 @@ spec:
         - key: karpenter.sh/capacity-type
           operator: In
           values: [spot]  # Only spot instances
-        - key: karpenter.azure.com/sku-family
+        - key: node.kubernetes.io/instance-type
           operator: In
-          values: [B, D]  # B-series (burstable) and D-series
-        - key: karpenter.azure.com/sku-size
-          operator: In
-          values: [2, 4]  # Smaller, cost-effective sizes
+          values: [Standard_B2s, Standard_B4ms, Standard_D2s_v5, Standard_D4s_v5]  # B-series and D-series
+      nodeClassRef:
+        group: karpenter.azure.com
+        kind: AKSNodeClass
+        name: default-nodeclass
       expireAfter: 2h  # Short-lived for dev workloads
       taints:
         - key: spot
@@ -477,7 +383,7 @@ EOF
 
 ```bash
 # View all NAP-related events
-kubectl get events -A --field-selector source=karpenter
+kubectl get events -A --field-selector source=karpenter --sort-by='.lastTimestamp'
 
 # Check NodePool status
 kubectl get nodepool -o wide

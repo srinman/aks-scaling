@@ -742,8 +742,7 @@ kubectl get hpa
 # Detailed HPA information
 kubectl describe hpa php-apache-hpa
 
-# Check HPA controller logs
-kubectl logs -n kube-system -l component=kube-controller-manager | grep -i "horizontal"
+
 
 # Verify Metrics Server is providing data
 kubectl get --raw /apis/metrics.k8s.io/v1beta1/nodes
@@ -753,27 +752,6 @@ kubectl get --raw /apis/metrics.k8s.io/v1beta1/pods
 kubectl get --raw /apis/metrics.k8s.io/v1beta1/namespaces/default/pods/php-apache-xxxxx
 ```
 
-### Common Issues and Solutions
-
-```bash
-# Issue: "unable to get metrics for resource cpu"
-# Solution: Check Metrics Server
-kubectl get deployment metrics-server -n kube-system
-kubectl logs -n kube-system deployment/metrics-server
-
-# Issue: "failed to get cpu utilization: missing request for cpu"
-# Solution: Ensure pods have CPU requests defined
-kubectl get deployment php-apache -o yaml | grep -A 5 resources
-
-# Issue: HPA shows "unknown" for current CPU
-# Solution: Wait 60 seconds for metrics to populate
-# Or check if pods are running
-kubectl get pods -l app=php-apache
-
-# Issue: Scale-down not happening
-# Solution: Check stabilization window
-kubectl get hpa php-apache-hpa -o yaml | grep -A 10 behavior
-```
 
 ### Performance Analysis
 
