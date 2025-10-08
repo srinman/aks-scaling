@@ -1,3 +1,13 @@
+# KEDA (Kubernetes Event-Driven Autoscaling) Guides
+
+## 📚 Available KEDA Demos
+
+| Demo Guide | Description |
+|------------|-------------|
+| [KEDA with Azure Service Bus](kedaexample.md) | KEDA demo with Azure Service Bus trigger for message-based scaling |
+| [KEDA with Blob Storage](kedaexamplewithblob.md) | KEDA demo with Azure Blob Storage trigger for file-based scaling |
+| [KEDA with Workload Identity](kedaexample-workloadidentity.md) | KEDA demo leveraging Azure Workload Identity for secure authentication |
+
 ## Autoscaling Challenges in Kubernetes Without KEDA
 
 Autoscaling in Kubernetes clusters without KEDA presents several challenges:

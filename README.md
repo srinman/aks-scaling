@@ -1,6 +1,6 @@
 # AKS Scaling Learning Guides
 
-Welcome to the comprehensive collection of Azure Kubernetes Service (AKS) scaling guides. This repository covers various scaling mechanisms in Kubernetes, from basic pod scaling to advanced node provisioning strategies.
+This repository covers various scaling mechanisms in Kubernetes, from basic pod scaling to advanced node provisioning strategies.
 
 ## 🚀 Introduction to Kubernetes Scaling
 
@@ -22,7 +22,7 @@ Each scaling approach addresses different aspects of application performance, av
 | [CAS](cas/) | Cluster AutoScaler - Automatically scale AKS cluster nodes up and down |
 | [KEDA](keda/) | Kubernetes Event-Driven Autoscaling - Scale based on external metrics and events |
 | [NAP](nap/) | Node Auto Provisioning - Advanced node scaling with Karpenter for optimal VM selection |
-| [VPA](vpa/) | Vertical Pod Autoscaler - Automatically adjust pod resource requests and limits |
+| [VPA](vpa/) | WORK-IN-PROGRESS Vertical Pod Autoscaler - Automatically adjust pod resource requests and limits |
 | [Basics](basics/) | Foundational concepts and VM SKU management for AKS scaling |
 
 ## 🛠️ Prerequisites
