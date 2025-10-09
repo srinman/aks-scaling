@@ -6,7 +6,7 @@ The Horizontal Pod Autoscaler (HPA) automatically scales the number of pods in a
 
 ## Enable Azure Managed Prometheus and Grafana Monitoring
 
-### Step 0: Configure Azure Monitor for AKS
+### Step 0: Configure Azure Monitor for AKS  (OPTIONAL - YOU CAN SKIP IF YOU DON'T HAVE ACCESS TO AMW, AMG)
 
 ```bash
 # Set environment variables
@@ -198,6 +198,151 @@ kubectl get apiservices | grep metrics
 
 # Should show:
 # v1beta1.metrics.k8s.io    kube-system/metrics-server   True
+
+# Verify Metrics API is registered
+kubectl get apiservices | grep metrics
+
+# Should show:
+# v1beta1.metrics.k8s.io    kube-system/metrics-server   True
+
+### Node Resource Analysis Tool
+
+For comprehensive node resource monitoring, use the included Python script `node_analyzer.py`:
+
+**Usage:**
+
+```bash
+# Make it executable
+chmod +x node_analyzer.py
+
+# Run the analyzer
+python3 node_analyzer.py
+
+# Or run it directly
+./node_analyzer.py
+
+# Monitor continuously during load testing
+watch -n 10 python3 node_analyzer.py
+
+# Save output for analysis
+python3 node_analyzer.py > node_analysis_$(date +%Y%m%d_%H%M%S).txt
+```
+
+**Example Output:**
+```bash
+================================================================================
+KUBERNETES NODE RESOURCE ANALYSIS
+================================================================================
+
+NODE: aks-nodepool1-13858355-vmss00000a
+------------------------------------------------------------
+CPU:
+  Capacity:    8.00 cores
+  Reserved:    180m cores (for system)
+  Allocatable: 7.82 cores
+  Allocated:   930m cores (11.9% of allocatable)
+  Current Use: 143m cores (1.8% of allocatable)
+Memory:
+  Capacity:    32.08Gi
+  Reserved:    2.35Gi (for system)
+  Allocatable: 29.73Gi
+  Allocated:   1.81Gi (6.1% of allocatable)
+  Current Use: 2.37Gi (8.0% of allocatable)
+
+Analysis:
+  ⚠️  Memory usage (2.37Gi) exceeds allocated (1.81Gi)
+================================================================================
+```
+
+### Pod Resource Analysis Tool
+
+For detailed pod-level analysis to understand HPA scaling decisions, use the included `pod_analyzer.py` script:
+
+**Usage:**
+
+```bash
+# Make it executable
+chmod +x pod_analyzer.py
+
+# Analyze default deployment (php-apache)
+python3 pod_analyzer.py
+
+# Analyze specific deployment
+python3 pod_analyzer.py my-deployment
+
+# Analyze deployment in specific namespace
+python3 pod_analyzer.py php-apache kube-system
+
+# Monitor continuously during HPA demo
+watch -n 10 python3 pod_analyzer.py
+
+# Save analysis for review
+python3 pod_analyzer.py > pod_analysis_$(date +%Y%m%d_%H%M%S).txt
+```
+
+**Example Output:**
+```bash
+================================================================================
+KUBERNETES POD ANALYZER FOR HPA DEMONSTRATIONS
+================================================================================
+Deployment: php-apache
+Namespace: default
+
+HPA STATUS
+------------------------------------------------------------
+✅ HPA Active: 3/4 replicas
+   Range: 1-10 replicas
+   Target CPU: 50%
+   Current CPU: 75% 🔥
+   Last Scale: 2025-10-08T10:30:15Z
+
+INDIVIDUAL POD ANALYSIS
+------------------------------------------------------------
+Pod: php-apache-7c5d4f8b9c-abc123
+  Status: Running | Node: aks-nodepool1-vmss000001 | Age: 2m
+  CPU Request: 200m | Current CPU: 180m (90.0% of request) 🔥
+  Memory Request: 128Mi | Current Memory: 45Mi (35.2% of request)
+
+Pod: php-apache-7c5d4f8b9c-def456
+  Status: Running | Node: aks-nodepool1-vmss000002 | Age: 5m
+  CPU Request: 200m | Current CPU: 160m (80.0% of request) ⚠️
+  Memory Request: 128Mi | Current Memory: 42Mi (32.8% of request)
+
+SCALING PREDICTION
+------------------------------------------------------------
+Prediction: Scale up expected
+Reason: CPU usage (75%) > target (50%) + 10%
+Confidence: HIGH
+📈 Scale-up likely in next 15-60 seconds
+
+HPA DEMONSTRATION INSIGHTS
+------------------------------------------------------------
+🎯 SCALING TRIGGER: CPU usage above target + threshold
+   Current: 75% | Target: 50% | Threshold: ~55%
+   💡 This is why HPA is adding pods!
+
+Resource Efficiency: 85.0%
+  Requested: 600m | Actually Using: 510m
+================================================================================
+```
+
+### Quick Usage Examples During HPA Demo
+
+```bash
+# Basic node monitoring during HPA demo
+python3 node_analyzer.py
+
+# Monitor continuously during load testing
+watch -n 10 python3 node_analyzer.py
+
+# Save output for analysis
+python3 node_analyzer.py > node_analysis_$(date +%Y%m%d_%H%M%S).txt
+
+# Pod-level HPA analysis
+python3 pod_analyzer.py
+
+# Monitor pod scaling behavior
+watch -n 5 python3 pod_analyzer.py
 ```
 
 
@@ -333,7 +478,7 @@ kubectl get hpa php-apache-hpa -o yaml
 
 ### Terminal Setup for Monitoring
 
-Open **4 terminals** for comprehensive monitoring:
+Open **5 terminals** for comprehensive monitoring:
 
 **Terminal 1: Watch HPA**
 ```bash
@@ -353,6 +498,11 @@ watch -n 2 "kubectl top pods -l app=php-apache"
 **Terminal 4: HPA Events**
 ```bash
 kubectl get events --watch --field-selector involvedObject.name=php-apache-hpa
+```
+
+**Terminal 5: Pod Analysis (NEW!)**
+```bash
+watch -n 10 python3 pod_analyzer.py
 ```
 
 ### Initial State Verification
@@ -475,6 +625,53 @@ kubectl describe hpa php-apache-hpa
 # Look for events like:
 # "New size: 2; reason: cpu resource utilization (percentage of request) above target"
 # "Successfully scaled deployment php-apache from 1 to 2"
+```
+
+### Pod Analyzer Insights During Scaling
+
+The `pod_analyzer.py` script provides real-time insights that explain HPA behavior to your audience:
+
+```bash
+# Run during different phases of scaling
+python3 pod_analyzer.py
+
+# Key insights it provides:
+# 1. Why HPA is scaling (CPU % vs target %)
+# 2. Individual pod resource utilization
+# 3. Load distribution across pods
+# 4. Scaling predictions
+# 5. Resource efficiency metrics
+```
+
+**Example progression during load testing:**
+
+**Phase 1: Initial State (1 pod)**
+```bash
+HPA STATUS: ✅ HPA Active: 1/1 replicas | Target CPU: 50% | Current CPU: 5%
+SCALING PREDICTION: Stable - CPU usage (5%) near target (50%)
+```
+
+**Phase 2: Load Applied (CPU spikes)**
+```bash
+HPA STATUS: ✅ HPA Active: 1/1 replicas | Target CPU: 50% | Current CPU: 85% 🔥
+SCALING PREDICTION: Scale up expected - CPU usage (85%) > target (50%) + 10%
+📈 Scale-up likely in next 15-60 seconds
+```
+
+**Phase 3: During Scale-Up**
+```bash
+HPA STATUS: ✅ HPA Active: 2/3 replicas | Target CPU: 50% | Current CPU: 68% 🔥
+POD ANALYSIS: 
+  Pod 1: 180m CPU (90% of request) 🔥
+  Pod 2: 165m CPU (82% of request) 🔥
+  Pod 3: Pending (new pod starting)
+```
+
+**Phase 4: Stable State**
+```bash
+HPA STATUS: ✅ HPA Active: 4/4 replicas | Target CPU: 50% | Current CPU: 52%
+LOAD DISTRIBUTION: Load Balance Score: EXCELLENT
+💡 HPA has achieved target utilization across all pods
 ```
 
 ### Key Observations for Participants
@@ -814,9 +1011,10 @@ kubectl get hpa
    - Create HPA with 50% CPU target
 
 2. **Baseline** (5 minutes)
-   - Setup 4 monitoring terminals
+   - Setup 5 monitoring terminals (including pod analyzer)
    - Verify 1 pod running
    - Check CPU usage (should be ~1-5m)
+   - Run `python3 pod_analyzer.py` to see initial state
    - Note baseline metrics
 
 3. **Load Generation** (10 minutes)
@@ -825,23 +1023,31 @@ kubectl get hpa
    - Observe HPA scaling decisions in Terminal 1
    - Count pods increasing in Terminal 2
    - Note events in Terminal 4
+   - **Watch pod analyzer Terminal 5 for scaling insights**
 
-4. **Grafana Monitoring** (10 minutes)
+4. **Pod Analysis Deep Dive** (5 minutes)
+   - Observe scaling triggers in pod analyzer
+   - Note load distribution across pods
+   - Understand resource efficiency metrics
+   - Screenshot pod analyzer output during scaling
+
+5. **Grafana Monitoring** (10 minutes)
    - Open Azure Managed Grafana
    - Create dashboard with CPU and replica count
    - Run queries for pod metrics
    - Screenshot graphs showing scale-up
 
-5. **Scale-Down** (10 minutes)
+6. **Scale-Down** (10 minutes)
    - Delete load generator
-   - Watch CPU drop immediately
+   - Watch CPU drop immediately in pod analyzer
    - Wait for 5-minute stabilization
    - Observe pod count decrease
    - Note final state: 1 replica
 
-6. **Analysis** (5 minutes)
+7. **Analysis** (5 minutes)
    - Review events: `kubectl get events --sort-by='.lastTimestamp'`
    - Check HPA status: `kubectl describe hpa`
+   - Compare pod analyzer insights with kubectl output
    - Calculate time to scale up vs down
    - Discuss observations
 
@@ -882,46 +1088,8 @@ kubectl get hpa
 - Background processing jobs
 - Microservices with unpredictable load
 
-## Advanced Topics
 
-### HPA Scaling Policies
 
-```yaml
-behavior:
-  scaleUp:
-    stabilizationWindowSeconds: 0  # Scale up immediately
-    policies:
-    - type: Percent
-      value: 100    # Double pods
-      periodSeconds: 15
-    - type: Pods
-      value: 4      # Or add 4 pods
-      periodSeconds: 15
-    selectPolicy: Max  # Use whichever gives more pods
-  scaleDown:
-    stabilizationWindowSeconds: 300  # Wait 5 minutes
-    policies:
-    - type: Percent
-      value: 50     # Remove 50% of pods
-      periodSeconds: 60
-```
-
-### Prometheus Integration
-
-For custom metrics, install Prometheus Adapter:
-
-```bash
-# Install Prometheus Adapter for custom metrics
-helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
-helm repo update
-
-helm install prometheus-adapter prometheus-community/prometheus-adapter \
-    --set prometheus.url=http://prometheus-server \
-    --set prometheus.port=80
-
-# Verify custom metrics API
-kubectl get apiservices | grep custom.metrics
-```
 
 ## References
 
