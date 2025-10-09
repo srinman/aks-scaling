@@ -18,12 +18,14 @@ Each scaling approach addresses different aspects of application performance, av
 
 | Guide | Description |
 |-------|-------------|
+| [Basics](basics/) | Foundational concepts and VM SKU management for AKS scaling |
 | [HPA](hpa/) | Horizontal Pod Autoscaler - Scale pods based on CPU, memory, and custom metrics |
 | [CAS](cas/) | Cluster AutoScaler - Automatically scale AKS cluster nodes up and down |
 | [KEDA](keda/) | Kubernetes Event-Driven Autoscaling - Scale based on external metrics and events |
 | [NAP](nap/) | Node Auto Provisioning - Advanced node scaling with Karpenter for optimal VM selection |
-| [VPA](vpa/) | WORK-IN-PROGRESS Vertical Pod Autoscaler - Automatically adjust pod resource requests and limits |
-| [Basics](basics/) | Foundational concepts and VM SKU management for AKS scaling |
+| [VPA](vpa/) | Vertical Pod Autoscaler - Automatically adjust pod resource requests and limits |
+| [Fleet](fleet/) | AKS Fleet - Scaling with Fleet |
+
 
 ## 🛠️ Prerequisites
 
