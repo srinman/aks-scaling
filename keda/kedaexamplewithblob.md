@@ -20,9 +20,9 @@ By the end of this training, you will:
 ```bash
 # Set variables
 LOCATION="East US2"
-RG_NAME="keda-blob-rg"
-AKS_NAME="keda-blob-training-aks"
-STORAGE_ACCOUNT_NAME="kedablob$(date +%s)"
+RG_NAME="democlusterrg"
+AKS_NAME="democluster"
+STORAGE_ACCOUNT_NAME="srinmankedatest"
 CONTAINER_NAME="demo-blobs"
 
 # Create resource group
@@ -99,17 +99,33 @@ echo "Storage Key obtained (will store in Kubernetes Secret)"
 
 ---
 
-## Part 2: KEDA with Storage Key Authentication
+## Part 2: KEDA with Storage Connection String Authentication
 
-### Step 1: Store Storage Key in Kubernetes Secret
+### Step 1: Get Storage Connection String
 
 ```bash
-# Create a Kubernetes secret with the storage account key
-kubectl create secret generic storage-secret \
-    --from-literal=storageKey="$STORAGE_KEY"
+# Get the full storage connection string (not just the key)
+STORAGE_CONNECTION_STRING=$(az storage account show-connection-string \
+    --name $STORAGE_ACCOUNT_NAME \
+    --resource-group $RG_NAME \
+    --query "connectionString" \
+    --output tsv)
+
+echo "Storage Connection String obtained"
 ```
 
-### Step 2: Create TriggerAuthentication with Storage Key
+### Step 2: Store Connection String in Kubernetes Secret
+
+```bash
+# Create a Kubernetes secret with the full connection string
+# Note: Azure Blob scaler requires a CONNECTION STRING, not just a storage key
+kubectl create secret generic storage-secret \
+    --from-literal=connection="$STORAGE_CONNECTION_STRING"
+```
+
+### Step 3: Create TriggerAuthentication with Connection String
+
+**Important**: The Azure Blob scaler expects the parameter name to be **`connection`** (for connection string), not `storageKey`.
 
 ```bash
 kubectl apply -f - <<EOF
@@ -120,9 +136,9 @@ metadata:
   namespace: default
 spec:
   secretTargetRef:
-  - parameter: storageKey
+  - parameter: connection     # Must be "connection" for Azure Blob scaler
     name: storage-secret
-    key: storageKey
+    key: connection
 EOF
 ```
 
@@ -156,22 +172,19 @@ spec:
             echo "Processing blobs from container: $CONTAINER_NAME"
             # Simulate blob processing work
             az storage blob list \
+              --connection-string "$STORAGE_CONNECTION_STRING" \
               --container-name $CONTAINER_NAME \
-              --account-name $STORAGE_ACCOUNT_NAME \
-              --account-key $STORAGE_KEY \
               --output table || true
             sleep 30
           done
         env:
-        - name: STORAGE_ACCOUNT_NAME
-          value: $STORAGE_ACCOUNT_NAME
         - name: CONTAINER_NAME
           value: $CONTAINER_NAME
-        - name: STORAGE_KEY
+        - name: STORAGE_CONNECTION_STRING
           valueFrom:
             secretKeyRef:
               name: storage-secret
-              key: storageKey
+              key: connection
 EOF
 ```
 
@@ -233,26 +246,23 @@ spec:
           for i in {1..15}; do
             echo "Test blob content \$i - \$(date)" > test-blob-\$i.txt
             az storage blob upload \
+              --connection-string "$STORAGE_CONNECTION_STRING" \
               --file test-blob-\$i.txt \
               --name test-blob-\$i.txt \
               --container-name $CONTAINER_NAME \
-              --account-name $STORAGE_ACCOUNT_NAME \
-              --account-key $STORAGE_KEY \
               --overwrite
             echo "Uploaded blob \$i"
             sleep 2
           done
           echo "Finished uploading 15 test blobs"
         env:
-        - name: STORAGE_ACCOUNT_NAME
-          value: $STORAGE_ACCOUNT_NAME
         - name: CONTAINER_NAME
           value: $CONTAINER_NAME
-        - name: STORAGE_KEY
+        - name: STORAGE_CONNECTION_STRING
           valueFrom:
             secretKeyRef:
               name: storage-secret
-              key: storageKey
+              key: connection
       restartPolicy: Never
 EOF
 
@@ -289,9 +299,8 @@ kubectl logs -n kube-system deployment/keda-operator -f
 
 # Check blob count in container
 az storage blob list \
+    --connection-string "$STORAGE_CONNECTION_STRING" \
     --container-name $CONTAINER_NAME \
-    --account-name $STORAGE_ACCOUNT_NAME \
-    --account-key $STORAGE_KEY \
     --query "length(@)"
 
 # Verify scaling works - should scale from 0 to N pods based on blob count
@@ -319,21 +328,18 @@ spec:
         - |
           echo "Cleaning up test blobs..."
           az storage blob delete-batch \
+            --connection-string "$STORAGE_CONNECTION_STRING" \
             --source $CONTAINER_NAME \
-            --account-name $STORAGE_ACCOUNT_NAME \
-            --account-key $STORAGE_KEY \
             --pattern "test-blob-*.txt"
           echo "Finished cleaning blobs"
         env:
-        - name: STORAGE_ACCOUNT_NAME
-          value: $STORAGE_ACCOUNT_NAME
         - name: CONTAINER_NAME
           value: $CONTAINER_NAME
-        - name: STORAGE_KEY
+        - name: STORAGE_CONNECTION_STRING
           valueFrom:
             secretKeyRef:
               name: storage-secret
-              key: storageKey
+              key: connection
       restartPolicy: Never
 EOF
 
