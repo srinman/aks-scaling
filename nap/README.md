@@ -4,10 +4,6 @@
 
 Node Auto Provisioning (NAP) is AKS's implementation of the open-source Karpenter project that automatically provisions, scales, and manages virtual machines (nodes) in response to pending pod pressure. NAP uses workload resource requirements to determine the optimal VM configuration for efficiency and cost-effectiveness.
 
-## Important Note on Private Clusters
-
-⚠️ **Current Limitation**: According to Microsoft documentation, private clusters are **not currently supported** with Node Auto Provisioning. However, this guide includes the private cluster setup commands for when this limitation is resolved.
-
 ## Prerequisites
 
 - Azure CLI 2.76.0 or later
@@ -181,6 +177,17 @@ kubectl  api-resources | grep karp
 
 ### Basic AKSNodeClass Configuration
 
+**Review this link for more details on AKSNodeClass**   
+https://learn.microsoft.com/en-us/azure/aks/node-autoprovision-aksnodeclass  
+
+An excerpt:   
+AKSNodeClass enables configuration of Azure-specific settings for node auto provisioning. Each NodePool must reference an AKSNodeClass using spec.template.spec.nodeClassRef. Multiple NodePools may point to the same AKSNodeClass, allowing you to share common Azure configurations across different node pools.
+
+
+Compare this with what's possible in regular nodepool:   
+https://learn.microsoft.com/en-us/azure/aks/custom-node-configuration?tabs=linux-node-pools   
+
+
 ```bash
 kubectl apply -f - <<EOF
 apiVersion: karpenter.azure.com/v1beta1
@@ -198,6 +205,7 @@ EOF
 
 ```bash
 k explain aksnodeclasses.spec
+k explain aksnc.spec
 k explain aksnodeclasses.spec.imageFamily
 ```
 
@@ -327,7 +335,7 @@ az vm list-skus --location "East US 2" --size Standard_D --output table | grep -
 3. **Tune NodePools**: Adjust limits and requirements based on workload patterns
 4. **Security**: Implement proper RBAC and Pod Security Standards
 5. **Integration**: Integrate with CI/CD pipelines for automated workload deployment
-
+s
 ## References
 
 - [Microsoft NAP Documentation](https://learn.microsoft.com/en-us/azure/aks/node-autoprovision)

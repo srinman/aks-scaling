@@ -182,7 +182,7 @@ kubectl get nodes
 
 ```bash
 # Check if Metrics Server is installed
-kubectl get deployment metrics-server -n kube-system
+kubectl get deployment metric-server -n kube-system
 
 # If not found, Metrics Server needs to be installed
 # On AKS, Metrics Server is typically pre-installed
