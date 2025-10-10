@@ -659,6 +659,81 @@ In the early days of Kubernetes, cluster administrators had to:
 - Scales node pools up/down based on pending pods
 - Works by adding/removing nodes from existing pools
 
+**Cluster Autoscaler Architecture Diagram:**
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                      Kubernetes Cluster                             │
+│                                                                     │
+│  ┌──────────────┐                                                  │
+│  │   Pod (New)  │  ──①──> Pod pending (insufficient capacity)      │
+│  └──────────────┘                                                  │
+│         │                                                           │
+│         ↓                                                           │
+│  ┌──────────────────────┐                                          │
+│  │  Kube Scheduler      │  ──②──> Cannot place pod                │
+│  │                      │         Marks pod as "Pending"           │
+│  └──────────────────────┘                                          │
+│                                                                     │
+│  ┌────────────────────────────────────────────┐                    │
+│  │  Cluster Autoscaler (Runs as Deployment)  │                    │
+│  │  ┌──────────────────────────────────────┐ │                    │
+│  │  │ Scan Loop (every 10s):              │ │                    │
+│  │  │  1. Check for pending pods           │ │                    │
+│  │  │  2. Evaluate node pools              │ │                    │
+│  │  │  3. Select pool to scale             │ │ ──③──> Decision:   │
+│  │  │  4. Calculate node count needed      │ │        Scale pool2 │
+│  │  └──────────────────────────────────────┘ │        by +2 nodes │
+│  └────────────────────────────────────────────┘                    │
+│                    │                                                │
+└────────────────────┼────────────────────────────────────────────────┘
+                     │
+                     ↓ ④ API call to cloud provider
+         ┌──────────────────────────────────────┐
+         │      Azure Resource Manager          │
+         │  (Scale VM Scale Set for pool2)      │
+         └──────────┬───────────────────────────┘
+                    │
+                    ↓ ⑤ Provision VMs
+    ┌───────────────────────────────────────────────────────┐
+    │         Pre-Defined Node Pools (VMSS)                 │
+    │                                                       │
+    │  ┌─────────────────┐  ┌─────────────────┐           │
+    │  │  Pool 1         │  │  Pool 2         │  ← Scale  │
+    │  │  Standard_D2s_v5│  │  Standard_D4s_v5│    this   │
+    │  │  Min: 1         │  │  Min: 1         │           │
+    │  │  Max: 10        │  │  Max: 5         │           │
+    │  │  Current: 3     │  │  Current: 1→3   │  +2 nodes │
+    │  └─────────────────┘  └─────────────────┘           │
+    │                                                       │
+    │  ┌─────────────────┐                                 │
+    │  │  Pool 3         │                                 │
+    │  │  Standard_E8s_v5│                                 │
+    │  │  Min: 0         │  ← Not selected                 │
+    │  │  Max: 3         │    (wrong VM size)              │
+    │  │  Current: 0     │                                 │
+    │  └─────────────────┘                                 │
+    └───────────────────────────────────────────────────────┘
+                    │
+                    ↓ ⑥ New nodes join cluster (1-2 minutes)
+         ┌──────────────────────────┐
+         │  Node: aks-pool2-vm1     │
+         │  Node: aks-pool2-vm2     │
+         └──────────┬───────────────┘
+                    │
+                    ↓ ⑦ Scheduler places pod on new node
+         ┌──────────────────────────┐
+         │   Pod: Running ✓         │
+         └──────────────────────────┘
+
+Key Characteristics:
+• Operates on pre-defined node pools (VMSS in Azure)
+• Must choose from existing pool configurations
+• Scaling decision: "Which pool?" and "How many nodes?"
+• Limited flexibility: Can only scale pools up/down
+• Timeline: 1.5-2 minutes from pending pod to running
+```
+
 **Example in AKS:**
 ```bash
 # Pre-create node pools with specific VM sizes
@@ -771,6 +846,133 @@ resources:
 │  5. Registers nodes to cluster                      │
 └──────────────────────────────────────────────────────┘
 ```
+
+**NAP (Node Auto Provisioning) Architecture Diagram:**
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                      AKS Cluster                                    │
+│                                                                     │
+│  ┌──────────────┐                                                  │
+│  │   Pod (New)  │  ──①──> Pod pending (insufficient capacity)      │
+│  │   cpu: 1.5   │         resources: {cpu: 1500m, memory: 3Gi}    │
+│  │   mem: 3Gi   │                                                  │
+│  └──────────────┘                                                  │
+│         │                                                           │
+│         ↓                                                           │
+│  ┌──────────────────────┐                                          │
+│  │  Kube Scheduler      │  ──②──> Cannot place pod                │
+│  │                      │         Marks pod as "Pending"           │
+│  └──────────────────────┘         reason: Unschedulable            │
+│                                                                     │
+└─────────────────────────────────────────────────────────────────────┘
+                     │
+                     │ ③ NAP watches for unschedulable pods
+                     ↓
+┌─────────────────────────────────────────────────────────────────────┐
+│               AKS Control Plane (Microsoft-Managed)                 │
+│                                                                     │
+│  ┌────────────────────────────────────────────────────────────┐   │
+│  │         NAP Controller (Managed Karpenter)                 │   │
+│  │  ┌──────────────────────────────────────────────────────┐ │   │
+│  │  │ Real-Time Decision Engine:                           │ │   │
+│  │  │  1. Detect pending pod                               │ │   │
+│  │  │  2. Analyze: cpu: 1500m, memory: 3Gi                │ │   │
+│  │  │  3. Check NodePool constraints                       │ │   │
+│  │  │  4. Calculate optimal VM size ────────────────────┐  │ │   │
+│  │  │     Options: D2s_v5 (2cpu), D4s_v5 (4cpu),       │  │ │   │
+│  │  │              D8s_v5 (8cpu)                        │  │ │   │
+│  │  │     Decision: Standard_D4s_v5 ✓ (best fit)       │  │ │   │
+│  │  │  5. Create NodeClaim CRD                          │  │ │   │
+│  │  └──────────────────────────────────────────────────┘  │ │   │
+│  └────────────────────────────────────────────────────────────┘   │
+│                    │                                                │
+└────────────────────┼────────────────────────────────────────────────┘
+                     │
+                     ↓ ④ Direct Azure ARM API call
+         ┌──────────────────────────────────────┐
+         │      Azure Resource Manager          │
+         │  Create specific VM:                 │
+         │  • Type: Standard_D4s_v5             │
+         │  • OS: Ubuntu 22.04                  │
+         │  • Disk: 128GB                       │
+         │  • Spot/On-Demand: Dynamic           │
+         └──────────┬───────────────────────────┘
+                    │
+                    ↓ ⑤ Provision single optimized VM (30-60 seconds)
+    ┌───────────────────────────────────────────────────────┐
+    │         Dynamic Node Provisioning                     │
+    │         (No Pre-Defined Pools Required!)              │
+    │                                                       │
+    │  ┌─────────────────────────────────────────────┐     │
+    │  │  NodeClaim: default-nodepool-xyz123         │     │
+    │  │  ┌───────────────────────────────────────┐  │     │
+    │  │  │  Spec (Calculated by NAP):            │  │     │
+    │  │  │  • instanceType: Standard_D4s_v5      │  │     │
+    │  │  │  • capacity-type: on-demand           │  │     │
+    │  │  │  • imageFamily: Ubuntu2204            │  │     │
+    │  │  │  • resources: {cpu: 4, memory: 16Gi}  │  │     │
+    │  │  └───────────────────────────────────────┘  │     │
+    │  │                                              │     │
+    │  │  Status:                                     │     │
+    │  │  • Launched: True                            │     │
+    │  │  • nodeName: aks-default-xyz123 ───────┐    │     │
+    │  └────────────────────────────────────────│────┘     │
+    │                                            │          │
+    │  ┌─────────────────────────────────────────▼────┐     │
+    │  │  Node: aks-default-xyz123                   │     │
+    │  │  • VM Size: Standard_D4s_v5 (4 vCPU)       │     │
+    │  │  • Memory: 16 GiB                           │     │
+    │  │  • Allocatable: {cpu: 3900m, memory: 14Gi} │     │
+    │  │  • Labels: {intent: apps, ...}              │     │
+    │  └─────────────────────────────────────────────┘     │
+    └───────────────────────────────────────────────────────┘
+                    │
+                    ↓ ⑥ Scheduler places pod on new node
+         ┌──────────────────────────────────────┐
+         │   Pod: Running ✓                     │
+         │   Node: aks-default-xyz123           │
+         │   CPU Used: 1.5 / 3.9 available      │
+         │   Memory Used: 3Gi / 14Gi available  │
+         │                                      │
+         │   Efficiency: 90%+ utilization       │
+         └──────────────────────────────────────┘
+                    │
+                    │ ⑦ After pod completes/deleted
+                    ↓
+         ┌──────────────────────────────────────┐
+         │  NAP Consolidation:                  │
+         │  • Node empty/underutilized          │
+         │  • consolidateAfter: 0s (immediate)  │
+         │  • Delete NodeClaim                  │
+         │  • Deprovision VM                    │
+         │  • Cost savings: $$ ✓                │
+         └──────────────────────────────────────┘
+
+Key Characteristics:
+• No pre-defined node pools (VMSSs) required
+• Dynamic VM size selection per workload
+• Optimal bin-packing: 90%+ utilization
+• Fast provisioning: 30-60 seconds
+• Automatic consolidation: Remove underutilized nodes
+• Timeline: 30-60 seconds from pending pod to running
+• Managed by Microsoft: Zero operational overhead
+```
+
+**Comparison: Cluster Autoscaler vs NAP**
+
+| Aspect | Cluster Autoscaler | NAP (Managed Karpenter) |
+|--------|-------------------|-------------------------|
+| **Decision Unit** | Node Pool (VMSS) | Individual Node (VM) |
+| **Pre-Configuration** | Must create pools upfront | Define policies only |
+| **VM Selection** | Fixed per pool | Dynamic per workload |
+| **Scaling Question** | "Which pool to scale?" | "What VM size needed?" |
+| **Bin-Packing** | Pool-level (70% util.) | Node-level (90%+ util.) |
+| **Speed** | 1.5-2 minutes | 30-60 seconds |
+| **Flexibility** | Limited to pool configs | Any VM size in policy |
+| **Consolidation** | Conservative (10min wait) | Aggressive (configurable) |
+| **Operational Overhead** | High (manage many pools) | Low (Microsoft-managed) |
+| **Architecture** | External controller → VMSS | Integrated control plane → VM |
 
 **Key Characteristics:**
 - Runs as **pods in your cluster** (not external service)
